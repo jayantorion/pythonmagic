@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(python -c \"from app.main import app; print\\('OK: app loaded successfully'\\)\")",
+      "Bash(python -m uvicorn app.main:app --host 127.0.0.1 --port 8765)",
+      "Bash(curl -s http://127.0.0.1:8765/)",
+      "Bash(curl -s http://127.0.0.1:8765/api/v1/candidate/profile)",
+      "Bash(curl -s -X POST \"http://127.0.0.1:8765/api/v1/jobs/discover?query=Data%20Engineer&limit=3\")",
+      "Bash(curl -s -X POST \"http://127.0.0.1:8765/api/v1/jobs/discover\" -H \"Content-Type: application/json\")",
+      "Bash(curl -s \"http://127.0.0.1:8765/api/v1/applications/stats/summary\")",
+      "Bash(curl -s -X POST \"http://127.0.0.1:8765/api/v1/jobs/discover\" -H \"Content-Type: application/json\" -d '{\"query\": \"Data Engineer\", \"limit\": 3}')",
+      "Bash(python -c ' *)",
+      "Bash(pkill -f \"uvicorn app.main\")",
+      "Bash(python -m uvicorn app.main:app --host 127.0.0.1 --port 8765 --log-level info)",
+      "Bash(echo \"Started, pid=$!\")",
+      "Bash(curl -s -X POST \"http://127.0.0.1:8765/api/v1/jobs/discover?query=Data%20Engineer&limit=3\" -H \"Content-Type: application/json\")",
+      "Bash(curl -s \"http://127.0.0.1:8765/api/v1/jobs?limit=3\")",
+      "Bash(python -m json.tool)",
+      "Bash(curl -s -w \"\\\\nHTTP_STATUS:%{http_code}\\\\n\" \"http://127.0.0.1:8765/api/v1/jobs?limit=3\")",
+      "Bash(netstat -ano)",
+      "Bash(taskkill /F /PID 5828)",
+      "Bash(taskkill /F /PID 4464)",
+      "Bash(cmd.exe //c \"taskkill /F /PID 5828 & taskkill /F /PID 4464 & exit\")",
+      "Bash(curl -s -w \"\\\\nHTTP_STATUS:%{http_code}\\\\n\" \"http://127.0.0.1:8765/api/v1/jobs?limit=2\")",
+      "Bash(cmd.exe //c \"for /f \\\\\"tokens=5\\\\\" %a in \\('netstat -ano ^| findstr :8765'\\) do taskkill /F /PID %a\")",
+      "Bash(taskkill /PID 5164)",
+      "Bash(taskkill /IM python.exe /F)",
+      "Bash(cd /d j:\\\\AIMODELTEST)",
+      "Bash(dir)",
+      "Bash(taskkill /PID 13888 /F)"
+    ]
+  }
+}
