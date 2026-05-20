@@ -7,6 +7,11 @@ import asyncio
 import sys
 from pathlib import Path
 
+# Force UTF-8 output for Windows consoles
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # Add backend to path
 backend_path = Path(__file__).parent / "backend"
 sys.path.insert(0, str(backend_path))

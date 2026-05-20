@@ -9,6 +9,11 @@ import sys
 import os
 from pathlib import Path
 
+# Force UTF-8 output for Windows consoles
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # Add backend to path
 backend_path = Path(__file__).parent / "backend"
 sys.path.insert(0, str(backend_path))
@@ -58,7 +63,7 @@ async def verify_system():
             )
             print(f"   ✓ Discovery completed: {discovery_result['discovered_total']} jobs found")
             print(f"   ✓ New jobs added: {discovery_result['new_jobs_added']}")
-            print(f"   ✓ Duplicates removed: {discovery_result['duplicate_count']}")
+            print(f"   ✓ Duplicates removed: {discovery_result['duplicates_removed']}")
 
             # Test job listing
             print("4. Testing job listing...")
@@ -80,9 +85,9 @@ async def verify_system():
             print("5. Testing application statistics...")
             from app.api.v1.applications import get_application_stats
             stats = await get_application_stats(db=db)
-            print(f"   ✓ Total applications: {stats.total_applications}")
-            print(f"   ✓ Discovered: {stats.discovered}")
-            print(f"   ✓ Applied: {stats.applied}")
+            print(f"   ✓ Total applications: {stats['total_applications']}")
+            print(f"   ✓ Discovered: {stats['discovered']}")
+            print(f"   ✓ Applied: {stats.get('applied', 0)}")
 
             # Test resume parsing (if we had a sample)
             print("6. Testing resume parser availability...")
