@@ -1,0 +1,164 @@
+# AI Job Search & Application Intelligence Platform
+# External YAML Configuration for Candidate Preferences & Job Priorities
+#
+# This file is the SINGLE SOURCE OF TRUTH for your candidate profile.
+# Edit THIS file instead of touching Python source code.
+#
+# To use: copy this file to `candidate_preferences.yaml` and edit the values.
+# The platform automatically loads this file on startup.
+#
+# GitHub: https://github.com/jayantorion/AI-Job-Search-Application-Intelligence-Platform
+# Email: jayantverma.ai@gmail.com (MUST be preserved)
+
+version: 1
+
+# A list lets you define multiple profiles (e.g. swap domain quickly).
+# For single-user setups, keep just one entry with id: "default"
+candidates:
+  - id: default          # <- Unique identifier for this profile (used internally)
+    profile:
+      # === BASIC INFO ===
+      full_name: "Your Full Name Here"              # e.g., "Alex Carter"
+      email: "your.email@example.com"               # MUST match GitHub email for commits
+      phone: "+1-XXX-XXX-XXXX"                      # Optional contact number
+      location: "City, State, Country"              # e.g., "Bangalore, India"
+      domain: "Your Primary Domain"                 # e.g., "Data Engineering", "AI/ML", "Backend"
+      experience_years: 0                           # Total years of professional experience
+      experience_level: "entry"                     # entry | mid_senior | senior | lead | executive
+      target_roles:                                 # Job titles you're targeting (array of strings)
+        - "Job Title 1"
+        - "Job Title 2"
+      career_summary: >                             # Multi-line summary of your background
+        Write a 2-3 sentence summary of your experience,
+        key strengths, and what you're looking for.
+        Use | for line breaks if needed in YAML.
+
+    # === TECH STACK PRIORITIES ===
+    # Controls how jobs are scored and filtered
+    tech_stack_priorities:
+      must_have:     # Non-negotiable skills/technologies (must be present in job)
+        - "Skill/Technology 1"
+        - "Skill/Technology 2"
+      preferred:     # Strongly preferred but not required (boosts score significantly)
+        - "Skill/Technology 3"
+        - "Skill/Technology 4"
+      nice_to_have:  # Nice extras (small score boost if present)
+        - "Skill/Technology 5"
+        - "Skill/Technology 6"
+
+    # === JOB PREFERENCES & FILTERS ===
+    preferences:
+      work_modes:        # Acceptable work arrangements
+        - "remote"       # Fully remote
+        - "hybrid"       # Mix of remote/office
+        - "onsite"       # Fully onsite
+      locations:         # Preferred cities/regions (array of strings)
+        - "City 1"
+        - "City 2"
+        - "Remote Worldwide"
+      excluded_locations: # Locations to automatically reject (array of strings)
+        - "Undesired City"
+      employment_types:  # Acceptable employment types
+        - "full_time"
+        - "part_time"
+        - "contract"
+        - "internship"
+      excluded_keywords: # Job titles containing these are auto-rejected (case-insensitive)
+        - "Intern"
+        - "Internship"
+        - "Senior Director"
+        - "VP"
+        - "PHP"          # Example: exclude if you don't work with PHP
+      excluded_companies: # Company names to auto-reject (exact match, case-insensitive)
+        - "StaffingAgencyX"
+        - "RecruiterY"
+      preferred_companies: # Companies you specifically want to work for (boosts score)
+        - "CompanyA"
+        - "CompanyB"
+      open_to_relocation: # Set to true if you're willing to move for the right role
+        false
+      work_authorization: # Your work visa/citizenship status
+        "Indian citizen; no sponsorship required"
+      notice_period_days: # Current notice period (in days)
+        30
+      salary_expectation: # Minimum acceptable compensation
+        min_amount: 0                     # Minimum annual salary (in currency below)
+        currency:   "INR"                 # INR, USD, EUR, etc.
+        period:     "annual"              # annual | monthly | hourly
+
+# === HEURISTIC TECH KEYWORDS ===
+# Used by the offline analyzer when Claude API is unavailable/unconfigured
+# Order doesn't matter; this is a master list of recognized tech terms
+heuristic_tech_keywords:
+  - "Python"
+  - "SQL"
+  - "Spark"
+  - "PySpark"
+  - "Airflow"
+  - "dbt"
+  - "Snowflake"
+  - "Databricks"
+  - "Kafka"
+  - "AWS"
+  - "GCP"
+  - "Azure"
+  - "BigQuery"
+  - "Redshift"
+  - "PostgreSQL"
+  - "MySQL"
+  - "MongoDB"
+  - "Docker"
+  - "Kubernetes"
+  - "Terraform"
+  - "Flink"
+  - "Iceberg"
+  - "Delta Lake"
+  - "Tableau"
+  - "Power BI"
+  - "Looker"
+  - "React"
+  - "Node.js"
+  - "Java"
+  - "Go"
+  - "Rust"
+  - "C++"
+  - "HTML"
+  - "CSS"
+  - "GraphQL"
+  - "REST"
+  - "Microservices"
+  - "DevOps"
+  - "CI/CD"
+  - "Jenkins"
+  - "GitLab"
+  - "GitHub"
+  - "Linux"
+  - "Unix"
+  - "Bash"
+  - "Shell"
+  - "Agile"
+  - "Scrum"
+  - "Kanban"
+
+# === DEFAULT SEED FACTS ===
+# Used by Diff-Guard resume tailoring if no resume has been parsed yet.
+# Each fact must have: fact_type, fact_value, verified (true/false)
+default_facts:
+  - fact_type: "skill"
+    fact_value: "Your primary skill (years, proficiency level)"
+    verified: true
+  - fact_type: "skill"
+    fact_value: "Another key skill (years, proficiency level)"
+    verified: true
+  - fact_type: "tool"
+    fact_value: "Key tools/platforms you're proficient with"
+    verified: true
+  - fact_type: "experience"
+    fact_value: "Notable achievement or experience (quantify if possible)"
+    verified: true
+  - fact_type: "education"
+    fact_value: "Your highest degree and year"
+    verified: true
+  - fact_type: "certification"
+    fact_value: "Relevant certifications (if any)"
+    verified: true

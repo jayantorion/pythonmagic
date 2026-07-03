@@ -128,7 +128,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-This installs 11 packages (~50 MB):
+This installs 12 packages (~50 MB):
 - `fastapi`, `uvicorn` — web framework
 - `pydantic`, `pydantic-settings` — validation & config
 - `sqlalchemy`, `aiosqlite`, `asyncpg` — database
@@ -136,6 +136,7 @@ This installs 11 packages (~50 MB):
 - `httpx`, `beautifulsoup4` — HTTP + HTML parsing
 - `pymupdf`, `python-docx` — resume PDF/DOCX parsing
 - `numpy` — embeddings
+- `pyyaml` — external config file parsing
 
 ### Step 4: Set Up Environment File
 
@@ -249,27 +250,35 @@ The README is structured to support a Next.js 14 + shadcn/ui dashboard, but the 
 
 Here's a map of **what to edit** for common customizations:
 
-### 🟢 To customize your candidate profile (most common edit)
+### 🟢 To customize your candidate profile (most common edit — no code required!)
 
-**File: [backend/app/api/v1/candidate.py](backend/app/api/v1/candidate.py)** — `get_or_create_default_profile()` function (lines 30-114)
+**File: [config/candidate_preferences.yaml](config/candidate_preferences.yaml)** ← **EDIT THIS FILE**
 
-This is the **seed data** the first time the app runs. Change:
-- `full_name`, `email`, `phone`, `location` — your contact info
-- `domain` — your target job domain (`Data Engineering`, `AI/ML`, `Backend`, etc.)
-- `target_roles` — list of roles you're targeting
-- `experience_years`, `experience_level` — your seniority
-- `tech_stack_priorities` — must-have / preferred / nice-to-have skills
-- `preferences` — work modes, locations, salary, excluded keywords/companies
-- `career_summary` — short bio for the resume
-- The `default_facts` list (lines 73-110) — your verified skills/experience bullets
+This is the **single source of truth** for your profile. No Python edits required.
 
-> After the first run, the profile is **already in the database**, so editing the seed code does NOT change existing data. Use the API to update (see Step 2 below) or delete `backend/data/job_agent.db` to re-seed.
+The example template with full inline documentation is at [config/candidate_preferences.example.yaml](config/candidate_preferences.example.yaml).
+
+You can customize:
+- **`candidates[].profile`** — `full_name`, `email`, `phone`, `location`, `domain`, `experience_years`, `experience_level`, `target_roles`, `career_summary`
+- **`candidates[].tech_stack_priorities`** — `must_have`, `preferred`, `nice_to_have` skills
+- **`candidates[].preferences`** — `work_modes`, `locations`, `excluded_locations`, `excluded_keywords`, `excluded_companies`, `preferred_companies`, `salary_expectation`, `notice_period_days`, `work_authorization`, `open_to_relocation`
+- **`heuristic_tech_keywords`** — master list of tech terms recognized by the offline analyzer
+- **`default_facts`** — seed resume facts used by Diff-Guard if no resume has been parsed yet
+
+After editing:
+1. **Restart the API**: stop `python run.py` and start it again.
+2. The platform reads this file on startup and validates it with Pydantic v2.
+3. The database is auto-seeded from this file on the first run.
+
+> **Tip:** If `config/candidate_preferences.yaml` is missing or invalid, the platform falls back to hardcoded defaults in `backend/app/api/v1/candidate.py` (so the app never breaks). The `*.example.yaml` file is always available as a fallback template.
+
+> **Override path for production:** Set `CANDIDATE_CONFIG_PATH` in your `.env` to point at a different YAML file (useful for mounting a configmap/secret in Docker/K8s).
 
 ### 🟢 To customize hard filters / matching rules
 
 **File: [backend/app/services/matching/hard_filters.py](backend/app/services/matching/hard_filters.py)**
 
-Defines which jobs are filtered out before any AI scoring. Useful when you want to add domain-specific keywords or blacklist companies.
+Defines which jobs are filtered out before any AI scoring. Reads from `profile.preferences` (which itself comes from the YAML). Useful when you want to add new domain-specific keywords or blacklist companies.
 
 ### 🟢 To customize the AI prompts (match / tailor)
 
@@ -280,6 +289,7 @@ Contains the system prompts for:
 - `evaluate_candidate_match()` — produces the match score
 - `tailor_resume_ast()` — rewrites the resume
 - `draft_answer_for_question()` — drafts application answers
+- `_heuristic_analyze_job()` — offline fallback that now reads keywords from YAML
 
 ### 🟢 To customize the local embedding algorithm
 
@@ -305,6 +315,10 @@ Edit [run.py](run.py) line 65 (`"--port", "8765"`) and the matching line in your
 
 By default SQLite is at `backend/data/job_agent.db`. Change `DATA_DIR` in [backend/app/core/config.py](backend/app/core/config.py) line 9.
 
+### 🟡 To change the config YAML location
+
+By default the platform reads `config/candidate_preferences.yaml` (relative to the project root). Set the `CANDIDATE_CONFIG_PATH` environment variable in your `.env` to point to a different file.
+
 ---
 
 ## 📖 Step-by-Step Usage: From Install to Applying for Jobs
@@ -320,15 +334,11 @@ python run.py
 
 Verify: `curl http://127.0.0.1:8765/health` → `{"status":"healthy"}`
 
-### Step 2: Customize your candidate profile
+### Step 2: Customize your candidate profile (via YAML — no code edits)
 
-Edit the seed data in `backend/app/api/v1/candidate.py` (lines 30-114), then **delete the existing DB**:
-```bash
-rm backend/data/job_agent.db
-# Restart the server — fresh profile is seeded
-```
+Edit [config/candidate_preferences.yaml](config/candidate_preferences.yaml) and update your info. The file is auto-loaded on startup. See the [example template](config/candidate_preferences.example.yaml) for the full structure with inline comments.
 
-OR update via API:
+**OR** (if you want to change it after the DB is seeded), update via API:
 ```bash
 curl -X PUT http://127.0.0.1:8765/api/v1/candidate/profile \
   -H "Content-Type: application/json" \
@@ -347,6 +357,12 @@ curl -X PUT http://127.0.0.1:8765/api/v1/candidate/profile \
       "excluded_keywords": ["PHP", "WordPress"]
     }
   }'
+```
+
+**OR** (advanced) edit the seed function directly in `backend/app/api/v1/candidate.py` then delete the DB to re-seed:
+```bash
+rm backend/data/job_agent.db
+# Restart the server — fresh profile is seeded
 ```
 
 ### Step 3: Upload your master resume (PDF or DOCX)
@@ -653,7 +669,7 @@ AIMODELTEST/
 ├── backend/                        # Python FastAPI application
 │   ├── app/
 │   │   ├── api/v1/                # REST endpoints (candidate, jobs, resume, applications)
-│   │   ├── core/                  # config.py, database.py, logging.py
+│   │   ├── core/                  # config.py, database.py, config_loader.py, logging.py
 │   │   ├── models/                # SQLAlchemy ORM (candidate, job, match, resume, application)
 │   │   ├── schemas/               # Pydantic request/response shapes
 │   │   └── services/
@@ -664,7 +680,10 @@ AIMODELTEST/
 │   │       └── resume/            # parser, tailor, diff_guard, pdf_generator
 │   ├── data/                       # SQLite database (gitignored)
 │   ├── storage/                    # Uploaded resumes & generated HTML (gitignored)
-│   └── requirements.txt            # 11 dependencies, ~50 MB
+│   └── requirements.txt            # 12 dependencies, ~50 MB
+├── config/                          # External YAML configuration (editable by user)
+│   ├── candidate_preferences.yaml        # Your profile, tech priorities, exclusions (EDIT THIS)
+│   └── candidate_preferences.example.yaml  # Commented template — copy & rename
 ├── .env.example                    # Template (copy to .env)
 ├── .gitignore                      # Excludes __pycache__, data/, storage/, .env
 ├── docker-compose.yml              # PostgreSQL+pgvector for production

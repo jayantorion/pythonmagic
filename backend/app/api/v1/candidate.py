@@ -8,6 +8,7 @@ from sqlalchemy import select, delete
 
 from app.core.database import get_db
 from app.core.config import STORAGE_DIR
+from app.core.config_loader import config_loader
 from app.core.logging import logger
 from app.models.candidate import CandidateProfile, ProfileFact, CandidateAnswer, FactCategory, VerificationLevel
 from app.models.resume import Resume
@@ -28,88 +29,154 @@ router = APIRouter(prefix="/candidate", tags=["Candidate Profile"])
 
 
 async def get_or_create_default_profile(db: AsyncSession) -> CandidateProfile:
+    """Get the existing candidate profile, or create one seeded from config/candidate_preferences.yaml.
+
+    The profile values are loaded from the external YAML config so users can customize their
+    profile without editing any Python code. Falls back to sensible defaults if YAML is missing.
+    """
     result = await db.execute(select(CandidateProfile).limit(1))
     profile = result.scalars().first()
     if not profile:
-        profile = CandidateProfile(
-            user_id="default_user",
-            full_name="Alex Data Engineer",
-            email="alex.dataeng@example.com",
-            phone="+91-9876543210",
-            location="Bangalore, India",
-            domain="Data Engineering",
-            target_roles=["Data Engineer", "Senior Data Engineer", "Analytics Engineer", "Data Platform Engineer"],
-            experience_years=3.5,
-            experience_level="mid_senior",
-            tech_stack_priorities={
+        # Load profile data from external YAML config
+        profile_data = config_loader.get_default_profile()
+        tech_priorities = config_loader.get_default_tech_priorities()
+        preferences = config_loader.get_default_preferences()
+
+        # Fallback defaults if YAML config is missing or empty
+        default_name = profile_data.get("full_name", "Default Candidate")
+        default_email = profile_data.get("email", "candidate@example.com")
+        default_domain = profile_data.get("domain", "Data Engineering")
+        default_target_roles = profile_data.get("target_roles") or [
+            "Data Engineer",
+            "Senior Data Engineer",
+            "Analytics Engineer",
+            "Data Platform Engineer",
+        ]
+        default_experience_years = profile_data.get("experience_years", 3.0)
+        default_career_summary = profile_data.get("career_summary") or (
+            "Data engineer with experience building batch and streaming pipelines. "
+            "Edit config/candidate_preferences.yaml to customize this profile."
+        )
+
+        # Ensure tech_priorities has all 3 categories even if YAML is partial
+        if not tech_priorities.get("must_have"):
+            tech_priorities = {
                 "must_have": ["Python", "SQL", "Spark", "Airflow"],
                 "preferred": ["dbt", "Snowflake", "Databricks", "Kafka", "AWS"],
                 "nice_to_have": ["Kubernetes", "Docker", "Terraform", "Iceberg"],
-            },
-            preferences={
+            }
+
+        # Ensure preferences dict has essential fields
+        if not preferences:
+            preferences = {
                 "work_modes": ["remote", "hybrid", "on_site"],
-                "preferred_locations": ["Bangalore", "Hyderabad", "Remote India", "Remote Worldwide"],
+                "preferred_locations": ["Bangalore", "Hyderabad", "Remote India"],
                 "excluded_locations": [],
-                "salary_expectation": {
-                    "min_amount": 2200000,
-                    "currency": "INR",
-                    "period": "annual",
-                },
+                "salary_expectation": {"min_amount": 2000000, "currency": "INR", "period": "annual"},
                 "notice_period_days": 30,
                 "employment_types": ["full_time"],
                 "excluded_keywords": ["Senior Director", "Intern", "Staffing", "PHP"],
                 "excluded_companies": [],
-                "preferred_companies": ["Swiggy", "Zomato", "Uber", "CRED", "Razorpay", "Microsoft", "Amazon"],
+                "preferred_companies": [],
                 "open_to_relocation": True,
                 "work_authorization": "Citizen / Authorized",
-            },
-            career_summary="Data Engineer with 3.5+ years of experience building resilient ETL/ELT pipelines, distributed stream processing architectures, and data warehouses in Snowflake and Databricks.",
+            }
+
+        profile = CandidateProfile(
+            user_id="default_user",
+            full_name=default_name,
+            email=default_email,
+            phone=profile_data.get("phone", "+91-9876543210"),
+            location=profile_data.get("location", "Bangalore, India"),
+            domain=default_domain,
+            target_roles=default_target_roles,
+            experience_years=default_experience_years,
+            experience_level=profile_data.get("experience_level", "mid_senior"),
+            tech_stack_priorities=tech_priorities,
+            preferences=preferences,
+            career_summary=default_career_summary,
         )
         db.add(profile)
         await db.commit()
         await db.refresh(profile)
 
-        # Seed initial default facts
-        default_facts = [
-            ProfileFact(
-                profile_id=profile.id,
-                category=FactCategory.SKILL,
-                entity_name="PySpark",
-                content="Demonstrated production experience building batch and streaming PySpark jobs handling 500GB+ daily data.",
-                verification_level=VerificationLevel.VERIFIED,
-                evidence_source="Initial Profile Seed",
-                confidence=1.0,
-            ),
-            ProfileFact(
-                profile_id=profile.id,
-                category=FactCategory.SKILL,
-                entity_name="Apache Airflow",
-                content="Orchestrated 40+ complex DAGs in Apache Airflow with custom operators, SLA alerts, and backfilling.",
-                verification_level=VerificationLevel.VERIFIED,
-                evidence_source="Initial Profile Seed",
-                confidence=1.0,
-            ),
-            ProfileFact(
-                profile_id=profile.id,
-                category=FactCategory.SKILL,
-                entity_name="Snowflake",
-                content="Architected star and snowflake schema data models in Snowflake, optimizing clustering keys and reducing query runtimes by 35%.",
-                verification_level=VerificationLevel.VERIFIED,
-                evidence_source="Initial Profile Seed",
-                confidence=1.0,
-            ),
-            ProfileFact(
-                profile_id=profile.id,
-                category=FactCategory.SKILL,
-                entity_name="SQL & Python",
-                content="Expert-level proficiency in advanced SQL window functions, CTEs, indexing, and Python OOP/async programming.",
-                verification_level=VerificationLevel.VERIFIED,
-                evidence_source="Initial Profile Seed",
-                confidence=1.0,
-            ),
-        ]
-        db.add_all(default_facts)
-        await db.commit()
+        # Seed initial default facts from YAML (if available)
+        yaml_facts = config_loader.get_default_facts()
+        if yaml_facts:
+            default_facts = []
+            for f in yaml_facts:
+                # Map fact_type to FactCategory enum
+                category_str = f.get("fact_type", "skill").upper()
+                if category_str == "SKILL":
+                    category = FactCategory.SKILL
+                elif category_str == "TOOL":
+                    category = FactCategory.SKILL  # Treat tools as skills
+                elif category_str == "EXPERIENCE":
+                    category = FactCategory.EXPERIENCE
+                elif category_str == "EDUCATION":
+                    category = FactCategory.EDUCATION
+                elif category_str == "CERTIFICATION":
+                    category = FactCategory.CERTIFICATION
+                else:
+                    category = FactCategory.SKILL
+
+                default_facts.append(
+                    ProfileFact(
+                        profile_id=profile.id,
+                        category=category,
+                        entity_name=f.get("fact_value", "").split("(")[0].strip()[:50],
+                        content=f.get("fact_value", ""),
+                        verification_level=VerificationLevel.VERIFIED if f.get("verified", True) else VerificationLevel.WORKING,
+                        evidence_source="YAML Config Seed",
+                        confidence=1.0 if f.get("verified", True) else 0.8,
+                    )
+                )
+            db.add_all(default_facts)
+            await db.commit()
+            logger.info(f"Seeded {len(default_facts)} default facts from YAML config")
+        else:
+            # Fallback seed facts if YAML is missing
+            default_facts = [
+                ProfileFact(
+                    profile_id=profile.id,
+                    category=FactCategory.SKILL,
+                    entity_name="PySpark",
+                    content="Demonstrated production experience building batch and streaming PySpark jobs handling 500GB+ daily data.",
+                    verification_level=VerificationLevel.VERIFIED,
+                    evidence_source="Initial Profile Seed",
+                    confidence=1.0,
+                ),
+                ProfileFact(
+                    profile_id=profile.id,
+                    category=FactCategory.SKILL,
+                    entity_name="Apache Airflow",
+                    content="Orchestrated 40+ complex DAGs in Apache Airflow with custom operators, SLA alerts, and backfilling.",
+                    verification_level=VerificationLevel.VERIFIED,
+                    evidence_source="Initial Profile Seed",
+                    confidence=1.0,
+                ),
+                ProfileFact(
+                    profile_id=profile.id,
+                    category=FactCategory.SKILL,
+                    entity_name="Snowflake",
+                    content="Architected star and snowflake schema data models in Snowflake, optimizing clustering keys and reducing query runtimes by 35%.",
+                    verification_level=VerificationLevel.VERIFIED,
+                    evidence_source="Initial Profile Seed",
+                    confidence=1.0,
+                ),
+                ProfileFact(
+                    profile_id=profile.id,
+                    category=FactCategory.SKILL,
+                    entity_name="SQL & Python",
+                    content="Expert-level proficiency in advanced SQL window functions, CTEs, indexing, and Python OOP/async programming.",
+                    verification_level=VerificationLevel.VERIFIED,
+                    evidence_source="Initial Profile Seed",
+                    confidence=1.0,
+                ),
+            ]
+            db.add_all(default_facts)
+            await db.commit()
+            logger.info("Seeded 4 fallback facts (YAML config not found)")
 
     return profile
 

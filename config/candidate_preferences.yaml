@@ -1,0 +1,132 @@
+# AI Job Search & Application Intelligence Platform
+# External YAML Configuration for Candidate Preferences & Job Priorities
+#
+# EDIT THIS FILE to customize your profile, tech priorities, and job preferences.
+# DO NOT edit Python source files for basic customization.
+#
+# GitHub: https://github.com/jayantorion/AI-Job-Search-Application-Intelligence-Platform
+# Email: jayantverma.ai@gmail.com (MUST be preserved)
+
+version: 1
+
+# A list lets you define multiple profiles (e.g. swap domain quickly).
+candidates:
+  - id: default
+    profile:
+      full_name: "Alex Carter"
+      email: "alex.carter@example.com"
+      phone: "+91-9876543210"
+      location: "Bangalore, India"
+      domain: "Data Engineering"
+      experience_years: 4
+      experience_level: "mid_senior"
+      target_roles:
+        - "Data Engineer"
+        - "Senior Data Engineer"
+        - "Analytics Engineer"
+        - "Data Platform Engineer"
+        - "ETL Developer"
+      career_summary: >
+        Data engineer with 4 years of experience designing batch and
+        streaming pipelines using Python, PySpark, Airflow, and Snowflake.
+        Strong in SQL, dbt, and AWS-based lakehouse architectures.
+
+    tech_stack_priorities:
+      must_have:
+        - "Python"
+        - "SQL"
+        - "Spark"
+        - "Airflow"
+      preferred:
+        - "dbt"
+        - "Snowflake"
+        - "Databricks"
+        - "Kafka"
+        - "AWS"
+      nice_to_have:
+        - "Kubernetes"
+        - "Terraform"
+        - "Flink"
+        - "Iceberg"
+
+    preferences:
+      work_modes:
+        - "remote"
+        - "hybrid"
+      locations:
+        - "Bangalore"
+        - "Hyderabad"
+        - "Remote India"
+        - "Remote Worldwide"
+      excluded_locations: []
+      employment_types:
+        - "full_time"
+        - "contract"
+      excluded_keywords:
+        - "Senior Director"
+        - "Intern"
+        - "PHP"
+        - "WordPress"
+      excluded_companies:
+        - "StaffingAgencyX"
+      preferred_companies: []
+      open_to_relocation: true
+      work_authorization: "Indian citizen; no sponsorship required"
+      notice_period_days: 30
+      salary_expectation:
+        min_amount: 2500000
+        currency: "INR"
+        period: "annual"
+
+# Heuristic tech keywords used by the offline analyzer (when Claude API is unavailable)
+heuristic_tech_keywords:
+  - "Python"
+  - "SQL"
+  - "Spark"
+  - "PySpark"
+  - "Airflow"
+  - "dbt"
+  - "Snowflake"
+  - "Databricks"
+  - "Kafka"
+  - "AWS"
+  - "GCP"
+  - "Azure"
+  - "BigQuery"
+  - "Redshift"
+  - "PostgreSQL"
+  - "MySQL"
+  - "MongoDB"
+  - "Docker"
+  - "Kubernetes"
+  - "Terraform"
+  - "Flink"
+  - "Iceberg"
+  - "Delta Lake"
+  - "Tableau"
+  - "Power BI"
+  - "Looker"
+
+# Default seed facts (used by Diff-Guard if no resume has been parsed yet)
+default_facts:
+  - fact_type: "skill"
+    fact_value: "Python (4 years, expert)"
+    verified: true
+  - fact_type: "skill"
+    fact_value: "Apache Spark / PySpark (3 years, production pipelines)"
+    verified: true
+  - fact_type: "skill"
+    fact_value: "Apache Airflow (2 years, DAG orchestration)"
+    verified: true
+  - fact_type: "skill"
+    fact_value: "SQL (4 years, advanced)"
+    verified: true
+  - fact_type: "tool"
+    fact_value: "Snowflake, dbt, Databricks, AWS (S3, Glue, Lambda)"
+    verified: true
+  - fact_type: "experience"
+    fact_value: "Built batch + streaming pipelines processing 2TB+/day"
+    verified: true
+  - fact_type: "education"
+    fact_value: "B.Tech Computer Science, 2021"
+    verified: true

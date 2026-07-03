@@ -29,6 +29,8 @@ async def verify_system():
         # Initialize database
         print("1. Initializing database...")
         from app.core.database import init_db
+        # Import all models so Base.metadata knows about them
+        from app.models import candidate, job, match, resume, application
         await init_db()
         print("   ✓ Database initialized successfully")
 

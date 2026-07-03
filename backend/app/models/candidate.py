@@ -32,42 +32,24 @@ class CandidateProfile(BaseModel):
 
     # Primary Domain (e.g., "Data Engineering", "Backend Development", "AI/ML")
     domain = Column(String(100), nullable=False, default="Data Engineering")
-    target_roles = Column(JSON, nullable=False, default=lambda: ["Data Engineer", "Senior Data Engineer", "Analytics Engineer"])
-    experience_years = Column(Float, nullable=False, default=3.0)
+    target_roles = Column(JSON, nullable=False, default=list)
+    experience_years = Column(Float, nullable=False, default=0.0)
     experience_level = Column(String(50), nullable=False, default="mid")
 
     # Naukri-Style Dynamic Tech Stack Priorities
+    # Values sourced from config/candidate_preferences.yaml
     tech_stack_priorities = Column(
         JSON,
         nullable=False,
-        default=lambda: {
-            "must_have": ["Python", "SQL", "Spark", "Airflow"],
-            "preferred": ["dbt", "Snowflake", "Databricks", "Kafka", "AWS"],
-            "nice_to_have": ["Kubernetes", "Docker", "Terraform", "Iceberg"],
-        },
+        default=lambda: {},
     )
 
     # Detailed Preferences
+    # Values sourced from config/candidate_preferences.yaml
     preferences = Column(
         JSON,
         nullable=False,
-        default=lambda: {
-            "work_modes": ["remote", "hybrid", "on_site"],
-            "preferred_locations": ["Bangalore", "Hyderabad", "Remote India", "Remote Worldwide"],
-            "excluded_locations": [],
-            "salary_expectation": {
-                "min_amount": 2000000,
-                "currency": "INR",
-                "period": "annual",
-            },
-            "notice_period_days": 30,
-            "employment_types": ["full_time"],
-            "excluded_keywords": ["Senior Director", "Intern", "Staffing", "PHP"],
-            "excluded_companies": [],
-            "preferred_companies": [],
-            "open_to_relocation": True,
-            "work_authorization": "Citizen / Authorized",
-        },
+        default=lambda: {},
     )
 
     # Summary

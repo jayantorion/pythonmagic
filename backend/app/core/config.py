@@ -11,6 +11,11 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 STORAGE_DIR = BASE_DIR / "storage"
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
+# Config directory for external YAML files (in project root, not backend)
+PROJECT_ROOT = BASE_DIR.parent
+CONFIG_DIR = PROJECT_ROOT / "config"
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -51,6 +56,9 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
         "http://localhost:8000",
     ]
+
+    # Candidate Preferences Config
+    CANDIDATE_CONFIG_PATH: Path = CONFIG_DIR / "candidate_preferences.yaml"
 
     @property
     def is_sqlite(self) -> bool:

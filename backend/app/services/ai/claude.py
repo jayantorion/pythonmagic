@@ -235,12 +235,16 @@ Constraints:
 
     # --- Offline Deterministic Heuristics (Fallback) ---
     def _heuristic_analyze_job(self, text: str, domain: str) -> Dict[str, Any]:
-        tech_keywords = [
+        # Load tech keywords from external YAML config (with hardcoded fallback)
+        from app.core.config_loader import config_loader
+        yaml_keywords = config_loader.get_heuristic_keywords()
+        default_keywords = [
             "python", "sql", "spark", "pyspark", "airflow", "dbt", "snowflake",
             "databricks", "kafka", "aws", "gcp", "azure", "bigquery", "redshift",
             "kubernetes", "docker", "terraform", "flink", "scala", "postgres",
             "fastapi", "django", "react", "next.js", "graphql", "rest api"
         ]
+        tech_keywords = [k.lower() for k in yaml_keywords] if yaml_keywords else default_keywords
         found_skills = [k for k in tech_keywords if re.search(rf"\b{re.escape(k)}\b", text, re.IGNORECASE)]
 
         exp_match = re.search(r"(\d+)\+?\s*(?:-\s*\d+)?\s*(?:years|yrs)", text, re.IGNORECASE)

@@ -31,3 +31,6 @@ python-docx>=1.1.0         # DOCX text extraction
 
 # Numerical ops (used for embeddings and cosine similarity)
 numpy>=1.26.0
+
+# YAML parsing for external config files
+pyyaml>=6.0
