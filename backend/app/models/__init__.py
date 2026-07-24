@@ -1,4 +1,5 @@
 from app.models.base import BaseModel
+from app.models.user import User
 from app.models.candidate import CandidateProfile, ProfileFact, CandidateAnswer, VerificationLevel, FactCategory
 from app.models.job import Job, Company, JobEmbedding
 from app.models.match import JobMatch
@@ -7,6 +8,7 @@ from app.models.application import Application, ApplicationEvent, ApplicationSta
 
 __all__ = [
     "BaseModel",
+    "User",
     "CandidateProfile",
     "ProfileFact",
     "CandidateAnswer",

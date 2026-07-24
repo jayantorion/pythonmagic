@@ -12,6 +12,8 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize logging and database tables
     setup_logging()
     logger.info("Initializing AI Job Search & Application Intelligence Platform...")
+    # Import models so Base.metadata is populated before create_all runs
+    from app.models import user, candidate, job, match, resume, application  # noqa: F401
     await init_db()
     logger.info(f"Database initialized. Engine: {'SQLite' if settings.is_sqlite else 'PostgreSQL'}")
     yield
