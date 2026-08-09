@@ -1,19 +1,19 @@
 import hashlib
-import json
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select
 
+from app.core.auth import get_current_active_user
 from app.core.database import get_db
 from app.core.config import STORAGE_DIR
 from app.core.config_loader import config_loader
 from app.core.logging import logger
 from app.models.candidate import CandidateProfile, ProfileFact, CandidateAnswer, FactCategory, VerificationLevel
+from app.models.user import User
 from app.models.resume import Resume
 from app.schemas.candidate import (
-    CandidateProfileCreate,
     CandidateProfileUpdate,
     CandidateProfileOut,
     ProfileFactCreate,
@@ -21,175 +21,129 @@ from app.schemas.candidate import (
     CandidateAnswerCreate,
     CandidateAnswerOut,
 )
-from app.schemas.resume import ResumeOut, ResumeAST
+from app.schemas.resume import ResumeOut
 from app.services.resume.parser import resume_parser
 from app.services.ai.claude import claude_ai_provider
 
 router = APIRouter(prefix="/candidate", tags=["Candidate Profile"])
 
 
-async def get_or_create_default_profile(db: AsyncSession) -> CandidateProfile:
-    """Get the existing candidate profile, or create one seeded from config/candidate_preferences.yaml.
+def _map_fact_category(fact_type: str) -> FactCategory:
+    ft = (fact_type or "skill").upper()
+    if ft in ("SKILL", "TOOL"):
+        return FactCategory.SKILL
+    if ft == "EXPERIENCE":
+        return FactCategory.EXPERIENCE
+    if ft == "EDUCATION":
+        return FactCategory.EDUCATION
+    if ft == "CERTIFICATION":
+        return FactCategory.CERTIFICATION
+    if ft == "PROJECT":
+        return FactCategory.PROJECT
+    if ft == "METRIC":
+        return FactCategory.METRIC
+    return FactCategory.SKILL
 
-    The profile values are loaded from the external YAML config so users can customize their
-    profile without editing any Python code. Falls back to sensible defaults if YAML is missing.
+
+async def get_or_create_user_profile(db: AsyncSession, user: User) -> CandidateProfile:
+    """Return the CandidateProfile for the given user, creating one if missing.
+
+    On first access for a brand-new user (defensive — should not happen post-registration),
+    seeds from config/candidate_preferences.yaml.
     """
-    result = await db.execute(select(CandidateProfile).limit(1))
+    result = await db.execute(
+        select(CandidateProfile).where(CandidateProfile.user_id == user.id)
+    )
     profile = result.scalars().first()
-    if not profile:
-        # Load profile data from external YAML config
-        profile_data = config_loader.get_default_profile()
-        tech_priorities = config_loader.get_default_tech_priorities()
-        preferences = config_loader.get_default_preferences()
+    if profile:
+        return profile
 
-        # Fallback defaults if YAML config is missing or empty
-        default_name = profile_data.get("full_name", "Default Candidate")
-        default_email = profile_data.get("email", "candidate@example.com")
-        default_domain = profile_data.get("domain", "Data Engineering")
-        default_target_roles = profile_data.get("target_roles") or [
-            "Data Engineer",
-            "Senior Data Engineer",
-            "Analytics Engineer",
-            "Data Platform Engineer",
-        ]
-        default_experience_years = profile_data.get("experience_years", 3.0)
-        default_career_summary = profile_data.get("career_summary") or (
-            "Data engineer with experience building batch and streaming pipelines. "
-            "Edit config/candidate_preferences.yaml to customize this profile."
-        )
+    # Defensive: user somehow exists without a profile. Seed from YAML.
+    profile_data = config_loader.get_default_profile()
+    tech_priorities = config_loader.get_default_tech_priorities()
+    preferences = config_loader.get_default_preferences()
 
-        # Ensure tech_priorities has all 3 categories even if YAML is partial
-        if not tech_priorities.get("must_have"):
-            tech_priorities = {
-                "must_have": ["Python", "SQL", "Spark", "Airflow"],
-                "preferred": ["dbt", "Snowflake", "Databricks", "Kafka", "AWS"],
-                "nice_to_have": ["Kubernetes", "Docker", "Terraform", "Iceberg"],
-            }
+    if not tech_priorities.get("must_have"):
+        tech_priorities = {
+            "must_have": ["Python", "SQL", "Spark", "Airflow"],
+            "preferred": ["dbt", "Snowflake", "Databricks", "Kafka", "AWS"],
+            "nice_to_have": ["Kubernetes", "Docker", "Terraform", "Iceberg"],
+        }
+    if not preferences:
+        preferences = {
+            "work_modes": ["remote", "hybrid", "on_site"],
+            "preferred_locations": ["Bangalore", "Hyderabad", "Remote India"],
+            "excluded_locations": [],
+            "salary_expectation": {"min_amount": 2000000, "currency": "INR", "period": "annual"},
+            "notice_period_days": 30,
+            "employment_types": ["full_time"],
+            "excluded_keywords": ["Senior Director", "Intern", "Staffing", "PHP"],
+            "excluded_companies": [],
+            "preferred_companies": [],
+            "open_to_relocation": True,
+            "work_authorization": "Citizen / Authorized",
+        }
 
-        # Ensure preferences dict has essential fields
-        if not preferences:
-            preferences = {
-                "work_modes": ["remote", "hybrid", "on_site"],
-                "preferred_locations": ["Bangalore", "Hyderabad", "Remote India"],
-                "excluded_locations": [],
-                "salary_expectation": {"min_amount": 2000000, "currency": "INR", "period": "annual"},
-                "notice_period_days": 30,
-                "employment_types": ["full_time"],
-                "excluded_keywords": ["Senior Director", "Intern", "Staffing", "PHP"],
-                "excluded_companies": [],
-                "preferred_companies": [],
-                "open_to_relocation": True,
-                "work_authorization": "Citizen / Authorized",
-            }
+    profile = CandidateProfile(
+        user_id=user.id,
+        full_name=user.full_name or user.username,
+        email=user.email,
+        phone=profile_data.get("phone"),
+        location=profile_data.get("location", "Bangalore, India"),
+        domain=profile_data.get("domain", "Data Engineering"),
+        target_roles=profile_data.get("target_roles") or ["Data Engineer", "Senior Data Engineer"],
+        experience_years=profile_data.get("experience_years", 3.0),
+        experience_level=profile_data.get("experience_level", "mid_senior"),
+        tech_stack_priorities=tech_priorities,
+        preferences=preferences,
+        career_summary=profile_data.get("career_summary"),
+    )
+    db.add(profile)
+    await db.flush()
 
-        profile = CandidateProfile(
-            user_id="default_user",
-            full_name=default_name,
-            email=default_email,
-            phone=profile_data.get("phone", "+91-9876543210"),
-            location=profile_data.get("location", "Bangalore, India"),
-            domain=default_domain,
-            target_roles=default_target_roles,
-            experience_years=default_experience_years,
-            experience_level=profile_data.get("experience_level", "mid_senior"),
-            tech_stack_priorities=tech_priorities,
-            preferences=preferences,
-            career_summary=default_career_summary,
-        )
-        db.add(profile)
-        await db.commit()
-        await db.refresh(profile)
-
-        # Seed initial default facts from YAML (if available)
-        yaml_facts = config_loader.get_default_facts()
-        if yaml_facts:
-            default_facts = []
-            for f in yaml_facts:
-                # Map fact_type to FactCategory enum
-                category_str = f.get("fact_type", "skill").upper()
-                if category_str == "SKILL":
-                    category = FactCategory.SKILL
-                elif category_str == "TOOL":
-                    category = FactCategory.SKILL  # Treat tools as skills
-                elif category_str == "EXPERIENCE":
-                    category = FactCategory.EXPERIENCE
-                elif category_str == "EDUCATION":
-                    category = FactCategory.EDUCATION
-                elif category_str == "CERTIFICATION":
-                    category = FactCategory.CERTIFICATION
-                else:
-                    category = FactCategory.SKILL
-
-                default_facts.append(
-                    ProfileFact(
-                        profile_id=profile.id,
-                        category=category,
-                        entity_name=f.get("fact_value", "").split("(")[0].strip()[:50],
-                        content=f.get("fact_value", ""),
-                        verification_level=VerificationLevel.VERIFIED if f.get("verified", True) else VerificationLevel.WORKING,
-                        evidence_source="YAML Config Seed",
-                        confidence=1.0 if f.get("verified", True) else 0.8,
-                    )
+    # Seed facts
+    yaml_facts = config_loader.get_default_facts()
+    if yaml_facts:
+        facts = []
+        for f in yaml_facts:
+            value = f.get("fact_value", "")
+            facts.append(
+                ProfileFact(
+                    profile_id=profile.id,
+                    category=_map_fact_category(f.get("fact_type", "skill")),
+                    entity_name=value.split("(")[0].strip()[:50] or value[:50],
+                    content=value,
+                    verification_level=VerificationLevel.VERIFIED
+                    if f.get("verified", True)
+                    else VerificationLevel.WORKING,
+                    evidence_source="YAML Config Seed",
+                    confidence=1.0 if f.get("verified", True) else 0.8,
                 )
-            db.add_all(default_facts)
-            await db.commit()
-            logger.info(f"Seeded {len(default_facts)} default facts from YAML config")
-        else:
-            # Fallback seed facts if YAML is missing
-            default_facts = [
-                ProfileFact(
-                    profile_id=profile.id,
-                    category=FactCategory.SKILL,
-                    entity_name="PySpark",
-                    content="Demonstrated production experience building batch and streaming PySpark jobs handling 500GB+ daily data.",
-                    verification_level=VerificationLevel.VERIFIED,
-                    evidence_source="Initial Profile Seed",
-                    confidence=1.0,
-                ),
-                ProfileFact(
-                    profile_id=profile.id,
-                    category=FactCategory.SKILL,
-                    entity_name="Apache Airflow",
-                    content="Orchestrated 40+ complex DAGs in Apache Airflow with custom operators, SLA alerts, and backfilling.",
-                    verification_level=VerificationLevel.VERIFIED,
-                    evidence_source="Initial Profile Seed",
-                    confidence=1.0,
-                ),
-                ProfileFact(
-                    profile_id=profile.id,
-                    category=FactCategory.SKILL,
-                    entity_name="Snowflake",
-                    content="Architected star and snowflake schema data models in Snowflake, optimizing clustering keys and reducing query runtimes by 35%.",
-                    verification_level=VerificationLevel.VERIFIED,
-                    evidence_source="Initial Profile Seed",
-                    confidence=1.0,
-                ),
-                ProfileFact(
-                    profile_id=profile.id,
-                    category=FactCategory.SKILL,
-                    entity_name="SQL & Python",
-                    content="Expert-level proficiency in advanced SQL window functions, CTEs, indexing, and Python OOP/async programming.",
-                    verification_level=VerificationLevel.VERIFIED,
-                    evidence_source="Initial Profile Seed",
-                    confidence=1.0,
-                ),
-            ]
-            db.add_all(default_facts)
-            await db.commit()
-            logger.info("Seeded 4 fallback facts (YAML config not found)")
+            )
+        db.add_all(facts)
 
+    await db.commit()
+    await db.refresh(profile)
+    logger.info(f"Defensively seeded profile for user '{user.username}'")
     return profile
 
 
 @router.get("/profile", response_model=CandidateProfileOut)
-async def get_profile(db: AsyncSession = Depends(get_db)):
-    profile = await get_or_create_default_profile(db)
+async def get_profile(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    profile = await get_or_create_user_profile(db, current_user)
     return profile
 
 
 @router.put("/profile", response_model=CandidateProfileOut)
-async def update_profile(data: CandidateProfileUpdate, db: AsyncSession = Depends(get_db)):
-    profile = await get_or_create_default_profile(db)
+async def update_profile(
+    data: CandidateProfileUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    profile = await get_or_create_user_profile(db, current_user)
 
     update_dict = data.model_dump(exclude_unset=True)
     if "tech_stack_priorities" in update_dict and update_dict["tech_stack_priorities"]:
@@ -207,15 +161,22 @@ async def update_profile(data: CandidateProfileUpdate, db: AsyncSession = Depend
 
 
 @router.get("/facts", response_model=List[ProfileFactOut])
-async def get_facts(db: AsyncSession = Depends(get_db)):
-    profile = await get_or_create_default_profile(db)
+async def get_facts(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    profile = await get_or_create_user_profile(db, current_user)
     result = await db.execute(select(ProfileFact).where(ProfileFact.profile_id == profile.id))
     return result.scalars().all()
 
 
 @router.post("/facts", response_model=ProfileFactOut)
-async def create_fact(data: ProfileFactCreate, db: AsyncSession = Depends(get_db)):
-    profile = await get_or_create_default_profile(db)
+async def create_fact(
+    data: ProfileFactCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    profile = await get_or_create_user_profile(db, current_user)
     fact = ProfileFact(
         profile_id=profile.id,
         category=FactCategory(data.category),
@@ -231,16 +192,43 @@ async def create_fact(data: ProfileFactCreate, db: AsyncSession = Depends(get_db
     return fact
 
 
+@router.delete("/facts/{fact_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_fact(
+    fact_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    profile = await get_or_create_user_profile(db, current_user)
+    result = await db.execute(
+        select(ProfileFact).where(
+            ProfileFact.id == fact_id, ProfileFact.profile_id == profile.id
+        )
+    )
+    fact = result.scalars().first()
+    if not fact:
+        raise HTTPException(status_code=404, detail="Fact not found")
+    await db.delete(fact)
+    await db.commit()
+    return None
+
+
 @router.get("/answers", response_model=List[CandidateAnswerOut])
-async def get_answers(db: AsyncSession = Depends(get_db)):
-    profile = await get_or_create_default_profile(db)
+async def get_answers(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    profile = await get_or_create_user_profile(db, current_user)
     result = await db.execute(select(CandidateAnswer).where(CandidateAnswer.profile_id == profile.id))
     return result.scalars().all()
 
 
 @router.post("/answers", response_model=CandidateAnswerOut)
-async def create_or_update_answer(data: CandidateAnswerCreate, db: AsyncSession = Depends(get_db)):
-    profile = await get_or_create_default_profile(db)
+async def create_or_update_answer(
+    data: CandidateAnswerCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    profile = await get_or_create_user_profile(db, current_user)
     q_hash = hashlib.sha256(data.question_text.strip().lower().encode("utf-8")).hexdigest()
 
     result = await db.execute(
@@ -271,11 +259,14 @@ async def create_or_update_answer(data: CandidateAnswerCreate, db: AsyncSession 
 
 
 @router.post("/answers/draft")
-async def draft_answer(question: str, db: AsyncSession = Depends(get_db)):
-    profile = await get_or_create_default_profile(db)
+async def draft_answer(
+    question: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    profile = await get_or_create_user_profile(db, current_user)
     q_hash = hashlib.sha256(question.strip().lower().encode("utf-8")).hexdigest()
 
-    # Check if exact question already exists in answer bank
     result = await db.execute(
         select(CandidateAnswer).where(
             CandidateAnswer.profile_id == profile.id,
@@ -290,7 +281,6 @@ async def draft_answer(question: str, db: AsyncSession = Depends(get_db)):
             "is_saved": True,
         }
 
-    # Fetch facts to ground the answer
     facts_res = await db.execute(select(ProfileFact).where(ProfileFact.profile_id == profile.id))
     facts = [{"content": f.content, "entity": f.entity_name} for f in facts_res.scalars().all()]
 
@@ -314,8 +304,9 @@ async def upload_resume(
     file: UploadFile = File(...),
     is_master: bool = Form(True),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
-    profile = await get_or_create_default_profile(db)
+    profile = await get_or_create_user_profile(db, current_user)
     content = await file.read()
     filename = file.filename or "resume.pdf"
     ext = Path(filename).suffix.lower()
@@ -338,16 +329,13 @@ async def upload_resume(
             detail="Could not extract text from the uploaded file. Please ensure it is not an encrypted or image-only scan.",
         )
 
-    # Save physical file to storage
     saved_path = STORAGE_DIR / f"{profile.id}_{filename}"
     with open(saved_path, "wb") as f:
         f.write(content)
 
-    # Parse AST
     ast = resume_parser.parse_to_ast(raw_text)
     ast_dict = ast.model_dump()
 
-    # If is_master, demote any previous master resume
     if is_master:
         res = await db.execute(select(Resume).where(Resume.profile_id == profile.id, Resume.is_master == True))
         for old_master in res.scalars().all():
@@ -366,7 +354,6 @@ async def upload_resume(
     await db.commit()
     await db.refresh(resume_record)
 
-    # Extract and store atomic facts
     atomic_facts = resume_parser.extract_atomic_facts(ast)
     for f_data in atomic_facts:
         fact = ProfileFact(
@@ -386,14 +373,16 @@ async def upload_resume(
 
 
 @router.get("/resume/master", response_model=Optional[ResumeOut])
-async def get_master_resume(db: AsyncSession = Depends(get_db)):
-    profile = await get_or_create_default_profile(db)
+async def get_master_resume(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    profile = await get_or_create_user_profile(db, current_user)
     result = await db.execute(
         select(Resume).where(Resume.profile_id == profile.id, Resume.is_master == True).order_by(Resume.created_at.desc())
     )
     master = result.scalars().first()
     if not master:
-        # Fallback to any resume
         res2 = await db.execute(select(Resume).where(Resume.profile_id == profile.id).order_by(Resume.created_at.desc()))
         master = res2.scalars().first()
     return master

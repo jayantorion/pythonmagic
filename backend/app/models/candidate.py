@@ -24,7 +24,14 @@ class FactCategory(str, enum.Enum):
 class CandidateProfile(BaseModel):
     __tablename__ = "candidate_profiles"
 
-    user_id = Column(String(36), nullable=True, default="default_user")
+    # 1:1 with User (nullable=True for backward compat with existing single-user DBs)
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
     full_name = Column(String(255), nullable=False, default="Candidate")
     email = Column(String(255), nullable=True)
     phone = Column(String(50), nullable=True)
@@ -56,6 +63,7 @@ class CandidateProfile(BaseModel):
     career_summary = Column(Text, nullable=True)
 
     # Relationships
+    user = relationship("User", back_populates="profile")
     facts = relationship("ProfileFact", back_populates="profile", cascade="all, delete-orphan")
     answers = relationship("CandidateAnswer", back_populates="profile", cascade="all, delete-orphan")
     resumes = relationship("Resume", back_populates="profile", cascade="all, delete-orphan")

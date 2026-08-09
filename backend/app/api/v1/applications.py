@@ -2,16 +2,17 @@ from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, func
 from sqlalchemy.orm import selectinload
 
+from app.core.auth import get_current_active_user
 from app.core.database import get_db
 from app.core.logging import logger
 from app.models.application import Application, ApplicationEvent, ApplicationStatus
 from app.models.job import Job
-from app.models.candidate import CandidateProfile
+from app.models.user import User
 from app.schemas.application import ApplicationOut, ApplicationUpdate, ApplicationEventOut
-from app.api.v1.candidate import get_or_create_default_profile
+from app.api.v1.candidate import get_or_create_user_profile
 
 router = APIRouter(prefix="/applications", tags=["Application CRM & Tracking"])
 
@@ -20,14 +21,18 @@ router = APIRouter(prefix="/applications", tags=["Application CRM & Tracking"])
 async def list_applications(
     status_filter: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
-    """List all applications grouped by lifecycle state for Kanban view."""
+    """List all applications for the current user, grouped by lifecycle state for Kanban view."""
+    profile = await get_or_create_user_profile(db, current_user)
+
     stmt = (
         select(Application)
         .options(
-            selectinload(Application.job).selectinload("match" if False else Job.match),
+            selectinload(Application.job).selectinload(Job.match),
             selectinload(Application.events),
         )
+        .where(Application.profile_id == profile.id)
         .order_by(desc(Application.created_at))
     )
 
@@ -42,11 +47,16 @@ async def list_applications(
 
 
 @router.get("/{application_id}", response_model=ApplicationOut)
-async def get_application(application_id: str, db: AsyncSession = Depends(get_db)):
+async def get_application(
+    application_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    profile = await get_or_create_user_profile(db, current_user)
     stmt = (
         select(Application)
         .options(selectinload(Application.job).selectinload(Job.match), selectinload(Application.events))
-        .where(Application.id == application_id)
+        .where(Application.id == application_id, Application.profile_id == profile.id)
     )
     result = await db.execute(stmt)
     app = result.scalars().first()
@@ -60,9 +70,14 @@ async def update_application(
     application_id: str,
     payload: ApplicationUpdate,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Update the application status, add notes, or schedule a follow-up."""
-    stmt = select(Application).where(Application.id == application_id)
+    profile = await get_or_create_user_profile(db, current_user)
+
+    stmt = select(Application).where(
+        Application.id == application_id, Application.profile_id == profile.id
+    )
     result = await db.execute(stmt)
     app_record = result.scalars().first()
     if not app_record:
@@ -75,7 +90,6 @@ async def update_application(
             new_status = ApplicationStatus(payload.status)
             app_record.status = new_status
 
-            # Mark applied_at if transitioning to APPLIED
             if new_status == ApplicationStatus.APPLIED and not app_record.applied_at:
                 app_record.applied_at = datetime.utcnow()
 
@@ -131,7 +145,21 @@ async def update_application(
 
 
 @router.get("/{application_id}/timeline", response_model=List[ApplicationEventOut])
-async def get_application_timeline(application_id: str, db: AsyncSession = Depends(get_db)):
+async def get_application_timeline(
+    application_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    profile = await get_or_create_user_profile(db, current_user)
+    # Verify ownership first
+    owner_check = await db.execute(
+        select(Application.id).where(
+            Application.id == application_id, Application.profile_id == profile.id
+        )
+    )
+    if not owner_check.scalars().first():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
+
     stmt = (
         select(ApplicationEvent)
         .where(ApplicationEvent.application_id == application_id)
@@ -148,9 +176,14 @@ async def add_interview_event(
     interview_type: str = "Phone Screen",
     notes: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Add a dedicated interview event to the application timeline."""
-    stmt = select(Application).where(Application.id == application_id)
+    profile = await get_or_create_user_profile(db, current_user)
+
+    stmt = select(Application).where(
+        Application.id == application_id, Application.profile_id == profile.id
+    )
     result = await db.execute(stmt)
     app_record = result.scalars().first()
     if not app_record:
@@ -182,12 +215,17 @@ async def add_interview_event(
 
 
 @router.get("/stats/summary")
-async def get_application_stats(db: AsyncSession = Depends(get_db)):
-    """Return aggregate statistics for the dashboard."""
-    from sqlalchemy import func
+async def get_application_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return aggregate statistics for the dashboard, scoped to the current user."""
+    profile = await get_or_create_user_profile(db, current_user)
 
     counts = await db.execute(
-        select(Application.status, func.count(Application.id)).group_by(Application.status)
+        select(Application.status, func.count(Application.id))
+        .where(Application.profile_id == profile.id)
+        .group_by(Application.status)
     )
     status_counts = {s.value: c for s, c in counts.all()}
 

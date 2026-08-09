@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     # Candidate Preferences Config
     CANDIDATE_CONFIG_PATH: Path = CONFIG_DIR / "candidate_preferences.yaml"
 
+    # JWT Authentication
+    JWT_SECRET_KEY: str = "change-this-to-a-secure-random-secret-key-for-production-min-32-chars"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_HOURS: int = 24
+
     @property
     def is_sqlite(self) -> bool:
         return self.DATABASE_URL.startswith("sqlite")

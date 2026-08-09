@@ -1,18 +1,19 @@
-import json
 from datetime import datetime
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, and_, desc
+from sqlalchemy import select, or_, desc
 from sqlalchemy.orm import selectinload
 
+from app.core.auth import get_current_active_user
 from app.core.database import get_db
 from app.core.logging import logger
 from app.models.job import Job, Company, JobEmbedding
 from app.models.match import JobMatch
 from app.models.candidate import CandidateProfile, ProfileFact
+from app.models.user import User
 from app.models.application import Application, ApplicationStatus, ApplicationEvent
-from app.schemas.job import JobCreate, JobOut, JobIngestRequest, JobSearchQuery
+from app.schemas.job import JobCreate, JobOut, JobIngestRequest
 from app.services.normalization.canonicalizer import canonicalizer
 from app.services.normalization.deduplicator import deduplication_engine
 from app.services.matching.hard_filters import hard_filter_engine
@@ -23,7 +24,7 @@ from app.services.discovery.ashby import ashby_source
 from app.services.discovery.universal_parser import universal_parser
 from app.services.ai.claude import claude_ai_provider
 from app.services.ai.embedding import embedding_service
-from app.api.v1.candidate import get_or_create_default_profile
+from app.api.v1.candidate import get_or_create_user_profile
 
 router = APIRouter(prefix="/jobs", tags=["Jobs & Discovery"])
 
@@ -37,8 +38,19 @@ async def list_jobs(
     limit: int = 50,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
-    stmt = select(Job).options(selectinload(Job.match), selectinload(Job.company))
+    """List jobs visible to the current user (those that have a JobMatch tied to their profile)."""
+    profile = await get_or_create_user_profile(db, current_user)
+
+    # Only show jobs that have a JobMatch tied to the current user's profile.
+    # This guarantees user-scoping: a job ingested for user A is invisible to user B.
+    stmt = (
+        select(Job)
+        .join(JobMatch, JobMatch.job_id == Job.id)
+        .options(selectinload(Job.match), selectinload(Job.company))
+        .where(JobMatch.profile_id == profile.id)
+    )
 
     if query:
         stmt = stmt.where(
@@ -55,20 +67,25 @@ async def list_jobs(
     if status:
         stmt = stmt.where(Job.status == status)
 
-    # Join on match to filter by min score or order by overall score
     if min_score is not None:
-        stmt = stmt.join(JobMatch).where(JobMatch.overall_score >= min_score).order_by(desc(JobMatch.overall_score))
+        stmt = stmt.where(JobMatch.overall_score >= min_score).order_by(desc(JobMatch.overall_score))
     else:
-        stmt = stmt.outerjoin(JobMatch).order_by(desc(JobMatch.overall_score), desc(Job.discovered_at))
+        stmt = stmt.order_by(desc(Job.discovered_at))
 
     stmt = stmt.offset(offset).limit(limit)
     result = await db.execute(stmt)
-    jobs = result.scalars().all()
+    jobs = result.scalars().unique().all()
     return jobs
 
 
 @router.get("/{job_id}", response_model=JobOut)
-async def get_job_detail(job_id: str, db: AsyncSession = Depends(get_db)):
+async def get_job_detail(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    profile = await get_or_create_user_profile(db, current_user)
+
     stmt = (
         select(Job)
         .options(selectinload(Job.match), selectinload(Job.company), selectinload(Job.application))
@@ -78,21 +95,28 @@ async def get_job_detail(job_id: str, db: AsyncSession = Depends(get_db)):
     job = result.scalars().first()
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    # Enforce user-scoping: job must have a match (or application) tied to current user's profile
+    if job.match is not None and job.match.profile_id != profile.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
     return job
 
 
 @router.post("/ingest", response_model=JobOut)
-async def ingest_single_job(request: JobIngestRequest, db: AsyncSession = Depends(get_db)):
+async def ingest_single_job(
+    request: JobIngestRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
     """Ingest a single job from a pasted URL or raw text description."""
-    profile = await get_or_create_default_profile(db)
+    profile = await get_or_create_user_profile(db, current_user)
 
-    # 1. Parse raw input into JobCreate schema
     try:
         job_create = await universal_parser.parse_from_url_or_text(request)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    # 2. Check 5-Tier Deduplication
     is_dup, existing_job, dup_reason = await deduplication_engine.find_duplicate(
         db=db,
         source=job_create.source,
@@ -104,16 +128,26 @@ async def ingest_single_job(request: JobIngestRequest, db: AsyncSession = Depend
         description_raw=job_create.description_raw,
     )
     if is_dup and existing_job:
-        logger.info(f"Duplicate job detected ({dup_reason}): returning existing record {existing_job.id}")
-        return existing_job
+        # Verify the existing job belongs to this user (match exists for this profile)
+        match_res = await db.execute(
+            select(JobMatch).where(
+                JobMatch.job_id == existing_job.id, JobMatch.profile_id == profile.id
+            )
+        )
+        if match_res.scalars().first():
+            logger.info(
+                f"Duplicate job detected ({dup_reason}) for user '{current_user.username}': "
+                f"returning existing record {existing_job.id}"
+            )
+            return existing_job
+        # Otherwise this job exists but is not yet seen by the current user — continue
+        # to create a user-scoped match below.
 
-    # 3. AI Structured Extraction
     structured_reqs = await claude_ai_provider.analyze_job_description(
         job_create.description_raw, target_domain=profile.domain
     )
     job_create.requirements_structured = structured_reqs
 
-    # 4. Get or Create Company
     norm_comp = canonicalizer.normalize_company_name(job_create.company_name)
     comp_res = await db.execute(select(Company).where(Company.normalized_name == norm_comp))
     company = comp_res.scalars().first()
@@ -122,7 +156,6 @@ async def ingest_single_job(request: JobIngestRequest, db: AsyncSession = Depend
         db.add(company)
         await db.flush()
 
-    # 5. Save Job
     job = Job(
         source=job_create.source,
         external_id=job_create.external_id,
@@ -146,7 +179,6 @@ async def ingest_single_job(request: JobIngestRequest, db: AsyncSession = Depend
     db.add(job)
     await db.flush()
 
-    # 6. Save Embedding
     emb = await embedding_service.get_embedding(job.description_raw[:2000])
     job_emb = JobEmbedding(
         job_id=job.id,
@@ -155,7 +187,6 @@ async def ingest_single_job(request: JobIngestRequest, db: AsyncSession = Depend
     )
     db.add(job_emb)
 
-    # 7. Compute Match Score & Explanations
     facts_res = await db.execute(select(ProfileFact).where(ProfileFact.profile_id == profile.id))
     facts = facts_res.scalars().all()
 
@@ -177,7 +208,6 @@ async def ingest_single_job(request: JobIngestRequest, db: AsyncSession = Depend
     )
     db.add(job_match)
 
-    # 8. Create Application CRM record in DISCOVERED state
     app_record = Application(
         job_id=job.id,
         profile_id=profile.id,
@@ -205,15 +235,17 @@ async def trigger_discovery(
     query: Optional[str] = None,
     limit: int = 15,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Scan compliant ATS feeds (Greenhouse, Lever, Ashby) for target domain jobs."""
-    profile = await get_or_create_default_profile(db)
+    profile = await get_or_create_user_profile(db, current_user)
     search_term = query or profile.domain or "Data Engineer"
 
-    logger.info(f"Triggering multi-channel discovery for: '{search_term}'")
+    logger.info(
+        f"User '{current_user.username}' triggering multi-channel discovery for: '{search_term}'"
+    )
     discovered_jobs: List[JobCreate] = []
 
-    # Fetch concurrently from sources
     try:
         gh_jobs = await greenhouse_source.fetch_jobs(search_term, limit=limit)
         discovered_jobs.extend(gh_jobs)
@@ -232,7 +264,6 @@ async def trigger_discovery(
     except Exception as e:
         logger.error(f"Ashby discovery failed: {e}")
 
-    # Fallback seed jobs if network or rate limits occur
     if not discovered_jobs:
         discovered_jobs = _get_default_seed_jobs()
 
@@ -244,13 +275,11 @@ async def trigger_discovery(
     facts = facts_res.scalars().all()
 
     for jc in discovered_jobs:
-        # Check hard filters
         filter_res = hard_filter_engine.evaluate(jc, profile)
         if not filter_res.passed:
             filtered_count += 1
             continue
 
-        # Check deduplication
         is_dup, _, _ = await deduplication_engine.find_duplicate(
             db=db,
             source=jc.source,
@@ -265,7 +294,6 @@ async def trigger_discovery(
             duplicate_count += 1
             continue
 
-        # Create Company
         norm_comp = canonicalizer.normalize_company_name(jc.company_name)
         comp_res = await db.execute(select(Company).where(Company.normalized_name == norm_comp))
         company = comp_res.scalars().first()
@@ -274,8 +302,9 @@ async def trigger_discovery(
             db.add(company)
             await db.flush()
 
-        # Structured analysis & match
-        structured_reqs = await claude_ai_provider.analyze_job_description(jc.description_raw, target_domain=profile.domain)
+        structured_reqs = await claude_ai_provider.analyze_job_description(
+            jc.description_raw, target_domain=profile.domain
+        )
         jc.requirements_structured = structured_reqs
 
         job = Job(

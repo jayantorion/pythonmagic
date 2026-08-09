@@ -325,6 +325,26 @@ By default the platform reads `config/candidate_preferences.yaml` (relative to t
 
 This is the full **end-to-end workflow** the platform supports.
 
+### 🌐 Web UI (Alternative to CLI)
+
+The platform now includes a Next.js 14 + shadcn/ui dashboard accessible at `http://localhost:3000` when you run `python run.py`. The frontend provides:
+- User registration and login (JWT authentication)
+- Per-user data isolation (each user sees only their own profile, jobs, applications)
+- Visual profile editor (replaces manual YAML editing)
+- Resume upload with parsed facts viewer
+- Job discovery and match breakdown modal
+- Kanban-style application tracker with drag-and-drop status updates
+- Settings page for password change and account deletion
+
+To use the web UI:
+1. Start the platform with `python run.py` (launches both backend and frontend)
+2. Open `http://localhost:3000` in your browser
+3. Register a new account or login with existing credentials
+4. Your dashboard will show seeded profile data from `config/candidate_preferences.yaml`
+5. Proceed with job discovery, resume tailoring, and application tracking via the UI
+
+> **Note:** The web UI communicates with the same FastAPI backend as the CLI examples below. All data is persisted to the database and scoped to the logged-in user.
+
 ### Step 1: Start the backend
 
 ```bash
