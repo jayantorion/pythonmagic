@@ -11,8 +11,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -107,3 +107,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Local-only files
+LINEAGE.md
+test_resume.txt
