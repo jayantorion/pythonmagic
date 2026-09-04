@@ -10,7 +10,18 @@ from app.services.ai.provider import AIProvider
 class ClaudeAIProvider(AIProvider):
     def __init__(self):
         self.api_key = settings.ANTHROPIC_API_KEY
-        self.client = anthropic.AsyncAnthropic(api_key=self.api_key) if self.api_key else None
+        self.auth_token = settings.ANTHROPIC_AUTH_TOKEN
+        self.base_url = settings.ANTHROPIC_BASE_URL or None
+
+        client_kwargs: Dict[str, Any] = {}
+        if self.api_key:
+            client_kwargs["api_key"] = self.api_key
+        if self.auth_token:
+            client_kwargs["auth_token"] = self.auth_token
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+
+        self.client = anthropic.AsyncAnthropic(**client_kwargs) if client_kwargs else None
         self.model = settings.ANTHROPIC_MODEL
         self.fast_model = settings.ANTHROPIC_FAST_MODEL
 

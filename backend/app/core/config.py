@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     # AI Configuration
     AI_PROVIDER: str = "anthropic"
     ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_AUTH_TOKEN: str = ""  # Bearer token (e.g. for proxies like OmniRoute)
+    ANTHROPIC_BASE_URL: str = ""  # Custom API endpoint (leave empty for official api.anthropic.com)
     ANTHROPIC_MODEL: str = "claude-3-5-sonnet-20241022"
     ANTHROPIC_FAST_MODEL: str = "claude-3-5-haiku-20241022"
 
