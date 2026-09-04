@@ -13,6 +13,7 @@ from app.models.job import Job
 from app.models.user import User
 from app.schemas.application import ApplicationOut, ApplicationUpdate, ApplicationEventOut
 from app.api.v1.candidate import get_or_create_user_profile
+from app.api.v1.jobs import _attach_user_views
 
 router = APIRouter(prefix="/applications", tags=["Application CRM & Tracking"])
 
@@ -29,7 +30,7 @@ async def list_applications(
     stmt = (
         select(Application)
         .options(
-            selectinload(Application.job).selectinload(Job.match),
+            selectinload(Application.job).selectinload(Job.matches),
             selectinload(Application.events),
         )
         .where(Application.profile_id == profile.id)
@@ -43,7 +44,11 @@ async def list_applications(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid status filter")
 
     result = await db.execute(stmt)
-    return result.scalars().unique().all()
+    apps = result.scalars().unique().all()
+    for a in apps:
+        if a.job is not None:
+            _attach_user_views(a.job, profile.id)
+    return apps
 
 
 @router.get("/{application_id}", response_model=ApplicationOut)
@@ -55,13 +60,15 @@ async def get_application(
     profile = await get_or_create_user_profile(db, current_user)
     stmt = (
         select(Application)
-        .options(selectinload(Application.job).selectinload(Job.match), selectinload(Application.events))
+        .options(selectinload(Application.job).selectinload(Job.matches), selectinload(Application.events))
         .where(Application.id == application_id, Application.profile_id == profile.id)
     )
     result = await db.execute(stmt)
     app = result.scalars().first()
     if not app:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
+    if app.job is not None:
+        _attach_user_views(app.job, profile.id)
     return app
 
 

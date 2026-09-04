@@ -31,6 +31,13 @@ class DeterministicHardFilterEngine:
         # 3. Work Mode Compatibility
         allowed_work_modes = prefs.get("work_modes", ["remote", "hybrid", "on_site"])
         if job.remote_type != "unknown" and job.remote_type not in allowed_work_modes:
+            # On-site jobs are allowed if the location is one of the candidate's preferred locations
+            if job.remote_type == "on_site":
+                preferred_locs = [l.lower().strip() for l in prefs.get("locations", []) if l]
+                job_loc = (job.location or "").lower().strip()
+                in_preferred = any(loc and loc in job_loc for loc in preferred_locs)
+                if in_preferred:
+                    return HardFilterResult(True, "On-site job in a preferred location — passed")
             # If candidate only wants remote, filter out on_site
             if "on_site" not in allowed_work_modes and job.remote_type == "on_site":
                 return HardFilterResult(False, f"Work mode '{job.remote_type}' does not match preferred work modes {allowed_work_modes}")

@@ -29,6 +29,16 @@ from app.api.v1.candidate import get_or_create_user_profile
 router = APIRouter(prefix="/jobs", tags=["Jobs & Discovery"])
 
 
+def _attach_user_views(job: Job, profile_id: str) -> None:
+    """Set transient `job.match` / `job.application` to the rows owned by this profile.
+
+    The Job model now holds one-to-many `matches`/`applications`; the API/serializers
+    expect the current user's single row exposed as `match`/`application`.
+    """
+    job.match = next((m for m in job.matches if m.profile_id == profile_id), None)
+    job.application = next((a for a in job.applications if a.profile_id == profile_id), None)
+
+
 @router.get("", response_model=List[JobOut])
 async def list_jobs(
     query: Optional[str] = None,
@@ -48,7 +58,7 @@ async def list_jobs(
     stmt = (
         select(Job)
         .join(JobMatch, JobMatch.job_id == Job.id)
-        .options(selectinload(Job.match), selectinload(Job.company))
+        .options(selectinload(Job.matches), selectinload(Job.company), selectinload(Job.applications))
         .where(JobMatch.profile_id == profile.id)
     )
 
@@ -72,9 +82,11 @@ async def list_jobs(
     else:
         stmt = stmt.order_by(desc(Job.discovered_at))
 
-    stmt = stmt.offset(offset).limit(limit)
+    stmt = stmt.distinct().offset(offset).limit(limit)
     result = await db.execute(stmt)
     jobs = result.scalars().unique().all()
+    for job in jobs:
+        _attach_user_views(job, profile.id)
     return jobs
 
 
@@ -88,7 +100,7 @@ async def get_job_detail(
 
     stmt = (
         select(Job)
-        .options(selectinload(Job.match), selectinload(Job.company), selectinload(Job.application))
+        .options(selectinload(Job.matches), selectinload(Job.company), selectinload(Job.applications))
         .where(Job.id == job_id)
     )
     result = await db.execute(stmt)
@@ -96,8 +108,10 @@ async def get_job_detail(
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
+    _attach_user_views(job, profile.id)
+
     # Enforce user-scoping: job must have a match (or application) tied to current user's profile
-    if job.match is not None and job.match.profile_id != profile.id:
+    if job.match is None and job.application is None and job.matches:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
     return job
@@ -139,9 +153,45 @@ async def ingest_single_job(
                 f"Duplicate job detected ({dup_reason}) for user '{current_user.username}': "
                 f"returning existing record {existing_job.id}"
             )
+            await db.refresh(existing_job)
+            await db.refresh(existing_job, ["matches", "applications", "company"])
+            _attach_user_views(existing_job, profile.id)
             return existing_job
-        # Otherwise this job exists but is not yet seen by the current user — continue
-        # to create a user-scoped match below.
+        # Otherwise this job exists globally but the current user has no match yet —
+        # create a user-scoped match + application for the EXISTING job (no new Job row).
+        facts_res = await db.execute(select(ProfileFact).where(ProfileFact.profile_id == profile.id))
+        facts = facts_res.scalars().all()
+        match_result = await matching_engine.match_and_explain(job_create, profile, facts)
+        job_match = JobMatch(
+            job_id=existing_job.id,
+            profile_id=profile.id,
+            overall_score=match_result["overall_score"],
+            skills_score=match_result["skills_score"],
+            experience_score=match_result["experience_score"],
+            domain_score=match_result["domain_score"],
+            seniority_score=match_result["seniority_score"],
+            recommendation=match_result["recommendation"],
+            pros=match_result["pros"],
+            gaps=match_result["gaps"],
+            dealbreakers=match_result["dealbreakers"],
+            missing_skills_status=match_result["missing_skills_status"],
+            explanation=match_result["explanation"],
+        )
+        db.add(job_match)
+        app_record = Application(
+            job_id=existing_job.id,
+            profile_id=profile.id,
+            status=ApplicationStatus.DISCOVERED,
+        )
+        db.add(app_record)
+        await db.commit()
+        await db.refresh(existing_job)
+        await db.refresh(existing_job, ["matches", "applications", "company"])
+        _attach_user_views(existing_job, profile.id)
+        logger.info(
+            f"Linked existing job '{existing_job.title}' to user '{current_user.username}' ({dup_reason})"
+        )
+        return existing_job
 
     structured_reqs = await claude_ai_provider.analyze_job_description(
         job_create.description_raw, target_domain=profile.domain
@@ -270,6 +320,9 @@ async def trigger_discovery(
     ingested_count = 0
     duplicate_count = 0
     filtered_count = 0
+    linked_count = 0
+    pending_app_job_ids = set()  # guard: same existing job may be matched by multiple discovered jobs
+    pending_match_job_ids = set()  # guard for JobMatch uniqueness (job_id, profile_id)
 
     facts_res = await db.execute(select(ProfileFact).where(ProfileFact.profile_id == profile.id))
     facts = facts_res.scalars().all()
@@ -280,7 +333,7 @@ async def trigger_discovery(
             filtered_count += 1
             continue
 
-        is_dup, _, _ = await deduplication_engine.find_duplicate(
+        is_dup, existing_job, dup_reason = await deduplication_engine.find_duplicate(
             db=db,
             source=jc.source,
             external_id=jc.external_id,
@@ -292,6 +345,59 @@ async def trigger_discovery(
         )
         if is_dup:
             duplicate_count += 1
+            # The job already exists globally, but this user may not have a
+            # JobMatch/Application for it yet (user-scoped visibility relies on
+            # JobMatch rows). Create one so the job shows up for this user.
+            if existing_job is not None:
+                existing_match_res = await db.execute(
+                    select(JobMatch).where(
+                        JobMatch.job_id == existing_job.id,
+                        JobMatch.profile_id == profile.id,
+                    )
+                )
+                existing_match = existing_match_res.scalars().first()
+                if not existing_match and existing_job.id not in pending_match_job_ids:
+                    match_res = await matching_engine.match_and_explain(jc, profile, facts)
+                    job_match = JobMatch(
+                        job_id=existing_job.id,
+                        profile_id=profile.id,
+                        overall_score=match_res["overall_score"],
+                        skills_score=match_res["skills_score"],
+                        experience_score=match_res["experience_score"],
+                        domain_score=match_res["domain_score"],
+                        seniority_score=match_res["seniority_score"],
+                        recommendation=match_res["recommendation"],
+                        pros=match_res["pros"],
+                        gaps=match_res["gaps"],
+                        dealbreakers=match_res["dealbreakers"],
+                        missing_skills_status=match_res["missing_skills_status"],
+                        explanation=match_res["explanation"],
+                    )
+                    db.add(job_match)
+                    pending_match_job_ids.add(existing_job.id)
+                    ingested_count += 1
+
+                # Ensure the user also has a pipeline (Application) entry for this job
+                if existing_job.id not in pending_app_job_ids:
+                    existing_app_res = await db.execute(
+                        select(Application).where(
+                            Application.job_id == existing_job.id,
+                            Application.profile_id == profile.id,
+                        )
+                    )
+                    if not existing_app_res.scalars().first():
+                        app_record = Application(
+                            job_id=existing_job.id,
+                            profile_id=profile.id,
+                            status=ApplicationStatus.DISCOVERED,
+                        )
+                        db.add(app_record)
+                    pending_app_job_ids.add(existing_job.id)
+
+                logger.info(
+                    f"Linked existing job '{existing_job.title}' to user profile "
+                    f"{profile.id} ({dup_reason})"
+                )
             continue
 
         norm_comp = canonicalizer.normalize_company_name(jc.company_name)
@@ -343,9 +449,11 @@ async def trigger_discovery(
             explanation=match_res["explanation"],
         )
         db.add(job_match)
+        pending_match_job_ids.add(job.id)
 
         app_record = Application(job_id=job.id, profile_id=profile.id, status=ApplicationStatus.DISCOVERED)
         db.add(app_record)
+        pending_app_job_ids.add(job.id)
 
         ingested_count += 1
 

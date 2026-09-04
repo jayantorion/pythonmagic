@@ -46,6 +46,22 @@ class JobCreate(BaseModel):
 
 from app.schemas.match import JobMatchOut
 
+
+class ApplicationBrief(BaseModel):
+    """Minimal application info embedded in JobOut (current user's pipeline entry)."""
+    id: str
+    job_id: str
+    profile_id: str
+    status: str
+    applied_at: Optional[datetime] = None
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class JobOut(BaseModel):
     id: str
     source: str
@@ -68,6 +84,7 @@ class JobOut(BaseModel):
     discovered_at: datetime
     status: str
     match: Optional[JobMatchOut] = None
+    application: Optional[ApplicationBrief] = None
 
     class Config:
         from_attributes = True

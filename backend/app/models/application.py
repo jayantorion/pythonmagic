@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Enum as SQLEnum, JSON
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Enum as SQLEnum, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
 
@@ -23,8 +23,9 @@ class ApplicationStatus(str, enum.Enum):
 
 class Application(BaseModel):
     __tablename__ = "applications"
+    __table_args__ = (UniqueConstraint("job_id", "profile_id", name="uq_application_job_profile"),)
 
-    job_id = Column(String(36), ForeignKey("jobs.id"), nullable=False, unique=True)
+    job_id = Column(String(36), ForeignKey("jobs.id"), nullable=False, index=True)
     profile_id = Column(String(36), ForeignKey("candidate_profiles.id"), nullable=False)
     resume_version_id = Column(String(36), ForeignKey("resume_versions.id"), nullable=True)
 
@@ -36,7 +37,7 @@ class Application(BaseModel):
     portal_application_id = Column(String(255), nullable=True)
 
     # Relationships
-    job = relationship("Job", back_populates="application")
+    job = relationship("Job", back_populates="applications")
     events = relationship("ApplicationEvent", back_populates="application", cascade="all, delete-orphan")
 
 

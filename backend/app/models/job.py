@@ -59,8 +59,8 @@ class Job(BaseModel):
 
     # Relationships
     company = relationship("Company", back_populates="jobs")
-    match = relationship("JobMatch", back_populates="job", uselist=False, cascade="all, delete-orphan")
-    application = relationship("Application", back_populates="job", uselist=False, cascade="all, delete-orphan")
+    matches = relationship("JobMatch", back_populates="job", cascade="all, delete-orphan")
+    applications = relationship("Application", back_populates="job", cascade="all, delete-orphan")
 
 
 class JobEmbedding(BaseModel):

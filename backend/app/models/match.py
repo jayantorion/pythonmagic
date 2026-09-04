@@ -1,12 +1,13 @@
-from sqlalchemy import Column, String, Float, Text, JSON, ForeignKey
+from sqlalchemy import Column, String, Float, Text, JSON, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
 
 
 class JobMatch(BaseModel):
     __tablename__ = "job_matches"
+    __table_args__ = (UniqueConstraint("job_id", "profile_id", name="uq_job_match_job_profile"),)
 
-    job_id = Column(String(36), ForeignKey("jobs.id"), nullable=False, unique=True)
+    job_id = Column(String(36), ForeignKey("jobs.id"), nullable=False, index=True)
     profile_id = Column(String(36), ForeignKey("candidate_profiles.id"), nullable=False)
 
     overall_score = Column(Float, nullable=False, default=0.0, index=True)
@@ -24,4 +25,4 @@ class JobMatch(BaseModel):
 
     explanation = Column(Text, nullable=True)
 
-    job = relationship("Job", back_populates="match")
+    job = relationship("Job", back_populates="matches")

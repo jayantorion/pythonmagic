@@ -33,13 +33,13 @@ async def tailor_resume_for_job(
     # 1. Fetch target job (and verify it has a match for this user)
     job_res = await db.execute(
         select(Job)
-        .options(selectinload(Job.match))
+        .options(selectinload(Job.matches))
         .where(Job.id == request.job_id)
     )
     job = job_res.scalars().first()
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target job not found")
-    if job.match and job.match.profile_id != profile.id:
+    if not any(m.profile_id == profile.id for m in job.matches):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target job not found")
 
     # 2. Fetch master resume for the user
@@ -210,12 +210,12 @@ async def generate_cover_letter(
     profile = await get_or_create_user_profile(db, current_user)
 
     job_res = await db.execute(
-        select(Job).options(selectinload(Job.match)).where(Job.id == job_id)
+        select(Job).options(selectinload(Job.matches)).where(Job.id == job_id)
     )
     job = job_res.scalars().first()
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    if job.match and job.match.profile_id != profile.id:
+    if not any(m.profile_id == profile.id for m in job.matches):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
     job_data = {"title": job.title, "company_name": job.company_name, "description_raw": job.description_raw}

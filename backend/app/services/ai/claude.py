@@ -40,7 +40,6 @@ Respond ONLY with valid JSON matching this schema:
             response = await self.client.messages.create(
                 model=self.fast_model,
                 max_tokens=1500,
-                temperature=0.0,
                 messages=[{"role": "user", "content": prompt}],
             )
             content = response.content[0].text
@@ -97,7 +96,6 @@ Return ONLY valid JSON matching this schema:
             response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=2000,
-                temperature=0.1,
                 messages=[{"role": "user", "content": prompt}],
             )
             content = response.content[0].text
@@ -154,7 +152,6 @@ Return ONLY valid JSON containing the tailored resume AST:
             response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=3500,
-                temperature=0.1,
                 messages=[{"role": "user", "content": prompt}],
             )
             content = response.content[0].text
@@ -193,7 +190,6 @@ Provide a direct, professional, factual 1-3 sentence response:"""
             response = await self.client.messages.create(
                 model=self.fast_model,
                 max_tokens=300,
-                temperature=0.1,
                 messages=[{"role": "user", "content": prompt}],
             )
             return response.content[0].text.strip()
@@ -225,7 +221,6 @@ Constraints:
             response = await self.client.messages.create(
                 model=self.fast_model,
                 max_tokens=600,
-                temperature=0.2,
                 messages=[{"role": "user", "content": prompt}],
             )
             return response.content[0].text.strip()
